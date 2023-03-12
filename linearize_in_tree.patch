@@ -1,0 +1,1088 @@
+diff --git a/clang/CMakeLists.txt b/clang/CMakeLists.txt
+index e3bc4b468..14185d8c0 100644
+--- a/clang/CMakeLists.txt
++++ b/clang/CMakeLists.txt
+@@ -393,7 +393,8 @@ if(NOT DEFINED CLANG_VERSION_PATCHLEVEL)
+   set(CLANG_VERSION_PATCHLEVEL ${LLVM_VERSION_PATCH})
+ endif()
+ # Unlike PACKAGE_VERSION, CLANG_VERSION does not include LLVM_VERSION_SUFFIX.
+-set(CLANG_VERSION "${CLANG_VERSION_MAJOR}.${CLANG_VERSION_MINOR}.${CLANG_VERSION_PATCHLEVEL}")
++#set(CLANG_VERSION "${CLANG_VERSION_MAJOR}.${CLANG_VERSION_MINOR}.${CLANG_VERSION_PATCHLEVEL}")
++set(CLANG_VERSION "hxpCTF.iead.DieCompilerversionDieSoSchoenHatGeprickeltInMeineBauchnabel")
+ message(STATUS "Clang version: ${CLANG_VERSION}")
+ 
+ # Configure the Version.inc file.
+diff --git a/clang/include/clang/Basic/CodeGenOptions.def b/clang/include/clang/Basic/CodeGenOptions.def
+index ef7957979..d04cd7337 100644
+--- a/clang/include/clang/Basic/CodeGenOptions.def
++++ b/clang/include/clang/Basic/CodeGenOptions.def
+@@ -482,6 +482,10 @@ ENUM_CODEGENOPT(ZeroCallUsedRegs, llvm::ZeroCallUsedRegs::ZeroCallUsedRegsKind,
+ /// Whether to use opaque pointers.
+ CODEGENOPT(OpaquePointers, 1, 0)
+ 
++
++CODEGENOPT(LinearizeCFG  , 1, 0) ///< Control whether control flow is linearized.
++
++
+ #undef CODEGENOPT
+ #undef ENUM_CODEGENOPT
+ #undef VALUE_CODEGENOPT
+diff --git a/clang/include/clang/Driver/Options.td b/clang/include/clang/Driver/Options.td
+index 3cab37b21..1a1162ce1 100644
+--- a/clang/include/clang/Driver/Options.td
++++ b/clang/include/clang/Driver/Options.td
+@@ -2910,6 +2910,12 @@ def ffinite_loops: Flag<["-"],  "ffinite-loops">, Group<f_Group>,
+ def fno_finite_loops: Flag<["-"], "fno-finite-loops">, Group<f_Group>,
+   HelpText<"Do not assume that any loop is finite.">, Flags<[CC1Option]>;
+ 
++// Control Flow Linearization
++def flinearize_cfg : Flag<["-"], "flinearize-cfg">, Group<f_Group>,
++  HelpText<"Turn on control flow linearizeation">, Flags<[CC1Option]>;
++def fno_linearize_cfg : Flag<["-"], "fno-linearize-cfg">, Group<f_Group>,
++  HelpText<"Turn off control flow linearizeation">, Flags<[CC1Option]>;
++
+ def ftrigraphs : Flag<["-"], "ftrigraphs">, Group<f_Group>,
+   HelpText<"Process trigraph sequences">, Flags<[CC1Option]>;
+ def fno_trigraphs : Flag<["-"], "fno-trigraphs">, Group<f_Group>,
+diff --git a/clang/lib/Basic/Version.cpp b/clang/lib/Basic/Version.cpp
+index e205da7ad..94b06742e 100644
+--- a/clang/lib/Basic/Version.cpp
++++ b/clang/lib/Basic/Version.cpp
+@@ -58,6 +58,7 @@ std::string getLLVMRevision() {
+ }
+ 
+ std::string getClangFullRepositoryVersion() {
++  return std::string("(totally not 15.0.6 with additional foo)");
+   std::string buf;
+   llvm::raw_string_ostream OS(buf);
+   std::string Path = getClangRepositoryPath();
+diff --git a/clang/lib/CodeGen/BackendUtil.cpp b/clang/lib/CodeGen/BackendUtil.cpp
+index 7c4e35634..ff2011369 100644
+--- a/clang/lib/CodeGen/BackendUtil.cpp
++++ b/clang/lib/CodeGen/BackendUtil.cpp
+@@ -771,6 +771,7 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
+   // Only enable CGProfilePass when using integrated assembler, since
+   // non-integrated assemblers don't recognize .cgprofile section.
+   PTO.CallGraphProfile = !CodeGenOpts.DisableIntegratedAS;
++  PTO.LinearizeCFG = CodeGenOpts.LinearizeCFG;
+ 
+   LoopAnalysisManager LAM;
+   FunctionAnalysisManager FAM;
+diff --git a/clang/lib/Driver/ToolChains/Clang.cpp b/clang/lib/Driver/ToolChains/Clang.cpp
+index 3704ed858..1cfe2a678 100644
+--- a/clang/lib/Driver/ToolChains/Clang.cpp
++++ b/clang/lib/Driver/ToolChains/Clang.cpp
+@@ -6262,6 +6262,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
+   Args.AddLastArg(CmdArgs, options::OPT_funroll_loops,
+                   options::OPT_fno_unroll_loops);
+ 
++  Args.AddLastArg(CmdArgs, options::OPT_flinearize_cfg, options::OPT_fno_linearize_cfg);
++
+   Args.AddLastArg(CmdArgs, options::OPT_fstrict_flex_arrays_EQ);
+ 
+   Args.AddLastArg(CmdArgs, options::OPT_pthread);
+diff --git a/clang/lib/Frontend/CompilerInvocation.cpp b/clang/lib/Frontend/CompilerInvocation.cpp
+index 2dd96e68b..78ad3188d 100644
+--- a/clang/lib/Frontend/CompilerInvocation.cpp
++++ b/clang/lib/Frontend/CompilerInvocation.cpp
+@@ -1408,6 +1408,9 @@ void CompilerInvocation::GenerateCodeGenArgs(
+   else if (!Opts.UnrollLoops && Opts.OptimizationLevel > 1)
+     GenerateArg(Args, OPT_fno_unroll_loops, SA);
+ 
++  if (Opts.LinearizeCFG)
++    GenerateArg(Args, OPT_flinearize_cfg, SA);
++
+   if (!Opts.BinutilsVersion.empty())
+     GenerateArg(Args, OPT_fbinutils_version_EQ, Opts.BinutilsVersion, SA);
+ 
+@@ -1700,6 +1703,9 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
+   Opts.UnrollLoops =
+       Args.hasFlag(OPT_funroll_loops, OPT_fno_unroll_loops,
+                    (Opts.OptimizationLevel > 1));
++  // Control Flow Linearization
++  Opts.LinearizeCFG =
++      Args.hasFlag(OPT_flinearize_cfg, OPT_fno_linearize_cfg, false);
+   Opts.BinutilsVersion =
+       std::string(Args.getLastArgValue(OPT_fbinutils_version_EQ));
+ 
+diff --git a/llvm/include/llvm/CodeGen/CodeGenPassBuilder.h b/llvm/include/llvm/CodeGen/CodeGenPassBuilder.h
+index f4b1980b9..2ddff5f1d 100644
+--- a/llvm/include/llvm/CodeGen/CodeGenPassBuilder.h
++++ b/llvm/include/llvm/CodeGen/CodeGenPassBuilder.h
+@@ -41,6 +41,7 @@
+ #include "llvm/Target/CGPassBuilderOption.h"
+ #include "llvm/Target/TargetMachine.h"
+ #include "llvm/Transforms/Scalar/ConstantHoisting.h"
++#include "llvm/Transforms/Scalar/Linearize.h"
+ #include "llvm/Transforms/Scalar/LoopPassManager.h"
+ #include "llvm/Transforms/Scalar/LoopStrengthReduce.h"
+ #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
+diff --git a/llvm/include/llvm/InitializePasses.h b/llvm/include/llvm/InitializePasses.h
+index 8cf31c08d..8846a732f 100644
+--- a/llvm/include/llvm/InitializePasses.h
++++ b/llvm/include/llvm/InitializePasses.h
+@@ -441,6 +441,8 @@ void initializeWriteBitcodePassPass(PassRegistry&);
+ void initializeWriteThinLTOBitcodePass(PassRegistry&);
+ void initializeXRayInstrumentationPass(PassRegistry&);
+ 
++void initializeLinearizePass(PassRegistry&);
++
+ } // end namespace llvm
+ 
+ #endif // LLVM_INITIALIZEPASSES_H
+diff --git a/llvm/include/llvm/LinkAllPasses.h b/llvm/include/llvm/LinkAllPasses.h
+index e660ea05d..b1ee636cb 100644
+--- a/llvm/include/llvm/LinkAllPasses.h
++++ b/llvm/include/llvm/LinkAllPasses.h
+@@ -228,6 +228,8 @@ namespace {
+       (void)llvm::createFunctionSpecializationPass();
+       (void)llvm::createSelectOptimizePass();
+ 
++      (void) llvm::createLinearizePass();
++
+       (void)new llvm::IntervalPartition();
+       (void)new llvm::ScalarEvolutionWrapperPass();
+       llvm::Function::Create(nullptr, llvm::GlobalValue::ExternalLinkage)->viewCFGOnly();
+diff --git a/llvm/include/llvm/Passes/PassBuilder.h b/llvm/include/llvm/Passes/PassBuilder.h
+index 0cbbdf7f3..6819f04b1 100644
+--- a/llvm/include/llvm/Passes/PassBuilder.h
++++ b/llvm/include/llvm/Passes/PassBuilder.h
+@@ -83,6 +83,9 @@ public:
+   // analyses after various module->function or cgscc->function adaptors in the
+   // default pipelines.
+   bool EagerlyInvalidateAnalyses;
++
++  // CFG linearization
++  bool LinearizeCFG;
+ };
+ 
+ /// This class provides access to building LLVM's passes.
+diff --git a/llvm/include/llvm/Transforms/Scalar.h b/llvm/include/llvm/Transforms/Scalar.h
+index 5f852963c..1c5c547ae 100644
+--- a/llvm/include/llvm/Transforms/Scalar.h
++++ b/llvm/include/llvm/Transforms/Scalar.h
+@@ -556,6 +556,8 @@ FunctionPass *createInstSimplifyLegacyPass();
+ // and scatter intrinsics with scalar code when target doesn't support them.
+ //
+ FunctionPass *createScalarizeMaskedMemIntrinLegacyPass();
++
++ModulePass *createLinearizePass();
+ } // End llvm namespace
+ 
+ #endif
+diff --git a/llvm/include/llvm/Transforms/Scalar/Linearize.h b/llvm/include/llvm/Transforms/Scalar/Linearize.h
+new file mode 100644
+index 000000000..e2238ab48
+--- /dev/null
++++ b/llvm/include/llvm/Transforms/Scalar/Linearize.h
+@@ -0,0 +1,43 @@
++#ifndef LLVM_TRANSFORMS_SCALAR_LINEARIZE_H
++#define LLVM_TRANSFORMS_SCALAR_LINEARIZE_H
++
++#include <llvm/IR/DerivedTypes.h>
++#include "llvm/Passes/PassBuilder.h"
++#include "llvm/Support/RandomNumberGenerator.h"
++
++#include <memory>
++#include <unordered_map>
++
++namespace llvm {
++
++struct LinearizePass : public PassInfoMixin<LinearizePass> {
++	enum labelkind {
++		LBL_FALLTHROUGH,
++		LBL_FRESH,
++	};
++
++	struct label {
++		labelkind kind;
++		size_t fresh;
++	};
++
++	PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM);
++	bool runOnFunction(Function &F);
++
++	std::pair<size_t, Align> getDiscardSizeAlign(Function &F, const DataLayout &DataLayout);
++	size_t getLabels(Function &F);
++	void shuffleBlocks(Function &F, size_t numlbl);
++	void eliminatePhis(Function &F);
++	void resolveContinuityErrors(Function &F);
++	Value *prepareBlock(BasicBlock &bb, Value *on, AllocaInst *selector, label label, AllocaInst *discard);
++	
++	template <typename T>
++	void linearizeIns(T *ins, Value *on, AllocaInst *discard);
++
++	std::unordered_map<BasicBlock *, struct label> labels;
++	std::unique_ptr<RandomNumberGenerator> rng;
++	Function *NopFun;
++};
++}
++
++#endif // LLVM_TRANSFORMS_SCALAR_LINEARIZE_H
+diff --git a/llvm/lib/Passes/PassBuilder.cpp b/llvm/lib/Passes/PassBuilder.cpp
+index 42fde3752..2395e79b0 100644
+--- a/llvm/lib/Passes/PassBuilder.cpp
++++ b/llvm/lib/Passes/PassBuilder.cpp
+@@ -165,6 +165,7 @@
+ #include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+ #include "llvm/Transforms/Scalar/JumpThreading.h"
+ #include "llvm/Transforms/Scalar/LICM.h"
++#include "llvm/Transforms/Scalar/Linearize.h"
+ #include "llvm/Transforms/Scalar/LoopAccessAnalysisPrinter.h"
+ #include "llvm/Transforms/Scalar/LoopBoundSplit.h"
+ #include "llvm/Transforms/Scalar/LoopDataPrefetch.h"
+diff --git a/llvm/lib/Passes/PassBuilderPipelines.cpp b/llvm/lib/Passes/PassBuilderPipelines.cpp
+index 945ef5123..ff180cb39 100644
+--- a/llvm/lib/Passes/PassBuilderPipelines.cpp
++++ b/llvm/lib/Passes/PassBuilderPipelines.cpp
+@@ -88,6 +88,7 @@
+ #include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+ #include "llvm/Transforms/Scalar/JumpThreading.h"
+ #include "llvm/Transforms/Scalar/LICM.h"
++#include "llvm/Transforms/Scalar/Linearize.h"
+ #include "llvm/Transforms/Scalar/LoopDeletion.h"
+ #include "llvm/Transforms/Scalar/LoopDistribute.h"
+ #include "llvm/Transforms/Scalar/LoopFlatten.h"
+@@ -193,6 +194,7 @@ PipelineTuningOptions::PipelineTuningOptions() {
+   CallGraphProfile = true;
+   MergeFunctions = EnableMergeFunctions;
+   EagerlyInvalidateAnalyses = EnableEagerlyInvalidateAnalyses;
++  LinearizeCFG = false;
+ }
+ 
+ namespace llvm {
+@@ -1261,9 +1263,14 @@ PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
+   MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM),
+                                                 PTO.EagerlyInvalidateAnalyses));
+ 
++
+   for (auto &C : OptimizerLastEPCallbacks)
+     C(MPM, Level);
+ 
++  // add cfg linearization pass
++  if (PTO.LinearizeCFG)
++    MPM.addPass(LinearizePass());
++
+   // Split out cold code. Splitting is done late to avoid hiding context from
+   // other optimizations and inadvertently regressing performance. The tradeoff
+   // is that this has a higher code size cost than splitting early.
+@@ -1862,6 +1869,10 @@ ModulePassManager PassBuilder::buildO0DefaultPipeline(OptimizationLevel Level,
+   for (auto &C : OptimizerLastEPCallbacks)
+     C(MPM, Level);
+ 
++  // add cfg linearization pass
++  if (PTO.LinearizeCFG)
++    MPM.addPass(LinearizePass());
++
+   if (LTOPreLink)
+     addRequiredLTOPreLinkPasses(MPM);
+ 
+diff --git a/llvm/lib/Passes/PassRegistry.def b/llvm/lib/Passes/PassRegistry.def
+index 7c29bffbc..35399fd38 100644
+--- a/llvm/lib/Passes/PassRegistry.def
++++ b/llvm/lib/Passes/PassRegistry.def
+@@ -126,6 +126,7 @@ MODULE_PASS("sancov-module", ModuleSanitizerCoveragePass())
+ MODULE_PASS("memprof-module", ModuleMemProfilerPass())
+ MODULE_PASS("poison-checking", PoisonCheckingPass())
+ MODULE_PASS("pseudo-probe-update", PseudoProbeUpdatePass())
++MODULE_PASS("linearize", LinearizePass())
+ #undef MODULE_PASS
+ 
+ #ifndef MODULE_PASS_WITH_PARAMS
+diff --git a/llvm/lib/Transforms/Scalar/CMakeLists.txt b/llvm/lib/Transforms/Scalar/CMakeLists.txt
+index eb008c159..750dd6d9a 100644
+--- a/llvm/lib/Transforms/Scalar/CMakeLists.txt
++++ b/llvm/lib/Transforms/Scalar/CMakeLists.txt
+@@ -79,6 +79,8 @@ add_llvm_component_library(LLVMScalarOpts
+   TLSVariableHoist.cpp
+   WarnMissedTransforms.cpp
+ 
++  Linearize.cpp
++
+   ADDITIONAL_HEADER_DIRS
+   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms
+   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms/Scalar
+diff --git a/llvm/lib/Transforms/Scalar/Linearize.cpp b/llvm/lib/Transforms/Scalar/Linearize.cpp
+new file mode 100644
+index 000000000..06bdefc7a
+--- /dev/null
++++ b/llvm/lib/Transforms/Scalar/Linearize.cpp
+@@ -0,0 +1,764 @@
++#include "llvm/IR/PassManager.h"
++#include "llvm/IR/IRBuilder.h"
++#include "llvm/IR/DerivedTypes.h"
++#include "llvm/Passes/PassPlugin.h"
++#include "llvm/Analysis/LoopInfo.h"
++#include "llvm/Analysis/PostDominators.h"
++
++#include "llvm/InitializePasses.h"
++
++#include "llvm/Support/Debug.h"
++#include "llvm/Support/raw_ostream.h"
++#include "llvm/Support/RandomNumberGenerator.h"
++#include "llvm/Transforms/Scalar.h"
++#include "llvm/Transforms/Utils/BasicBlockUtils.h"
++
++#include "llvm/Transforms/Scalar/Linearize.h"
++
++#include <algorithm>
++#include <utility>
++#include <list>
++#include <vector>
++
++using namespace llvm;
++
++void LinearizePass::resolveContinuityErrors(Function &F) {
++	SmallVector<Instruction *> tofix;
++	for (auto it = ++F.begin(); it != F.end(); ++it) {
++		BasicBlock *home = &*it;
++		for (Instruction &ins : *it) {
++			for (Use &u : ins.uses()) {
++				Instruction *iu = cast<Instruction>(u.getUser());
++				PHINode *pu = dyn_cast<PHINode>(iu);
++				if (pu) {
++					if (pu->getIncomingBlock(u) == home) {
++						continue;
++					}
++					tofix.push_back(&ins);
++					break;
++				}
++				if (iu->getParent() == home)
++					continue;
++				tofix.push_back(&ins);
++				break;
++			}
++		}
++	}
++
++	Instruction *first_ins = F.begin()->getFirstNonPHIOrDbg();
++	SmallVector<Use *> uses;
++	std::unordered_map<BasicBlock *, LoadInst *> bbLoadMap;
++	bbLoadMap.reserve(100);
++	for (Instruction *ins : tofix) {
++		dbgs() << "fixing ";
++		ins->print(dbgs());
++		dbgs() << "\n";
++		Type *ty = ins->getType();
++		BasicBlock *home = ins->getParent();
++		AllocaInst *alloc = new AllocaInst(ty, 0, Twine(ins->getName(), ".ins.rewrite"), first_ins);
++
++		new StoreInst(ins, alloc, ins->getNextNonDebugInstruction());
++
++		uses.clear();
++		bbLoadMap.clear();
++		for (Use &u : ins->uses()) {
++			Instruction *iu = cast<Instruction>(u.getUser());
++			assert(!isa<PHINode>(iu));
++
++			if (iu->getParent() != home)
++				uses.push_back(&u);
++		}
++
++		for (Use *u : uses) {
++			Instruction *uins = cast<Instruction>(u->getUser());
++			dbgs() << "rewriting use ";
++			uins->print(dbgs());
++			LoadInst *load = nullptr;
++			BasicBlock *bb = uins->getParent();
++			auto it = bbLoadMap.find(bb);
++			if (it != bbLoadMap.end()) {
++				load = it->second;
++				dbgs() << "in " << bb->getName() << " (shared)\n";
++			} else {
++				load = new LoadInst(ty, alloc, Twine(ins->getName(), ".ins.use"), cast<Instruction>(bb->getFirstNonPHIOrDbg()));
++				bbLoadMap.emplace(bb, load);
++				dbgs() << "in " << bb->getName() << " (fresh)\n";
++			}
++			assert(load != nullptr);
++			u->set(load);
++		}
++	}
++}
++
++/**
++ * Rewrites phi nodes as memory allocation + access
++ * needs to be run before memory access are rewritten
++ */
++void LinearizePass::eliminatePhis(Function &F) {
++	std::vector<PHINode *> phis;
++	for (BasicBlock &bb : F) {
++		for (Instruction &ins : bb) {
++			PHINode *phi = dyn_cast<PHINode>(&ins);
++			if (phi)
++				phis.push_back(phi);
++		}
++	}
++
++	Instruction *first_ins = F.begin()->getFirstNonPHI();
++
++	SmallVector<Use *> uses;
++	std::unordered_map<BasicBlock *, LoadInst *> bbLoadMap;
++	bbLoadMap.reserve(100);
++	for (PHINode *phi : phis) {
++		Type *ty = phi->getType();
++		dbgs() << "rewriting ";
++		phi->print(dbgs());
++		dbgs() << "\n";
++		AllocaInst *alloc = new AllocaInst(ty, 0, Twine(phi->getName(), ".phi.rewrite"), first_ins);
++		for (unsigned i = 0; i < phi->getNumIncomingValues(); ++i) {
++			// skip duplicate edges
++			BasicBlock *bb = phi->getIncomingBlock(i);
++			if (phi->getBasicBlockIndex(bb) != i) continue;
++			Value *v = phi->getIncomingValue(i);
++			// ignore self references
++			if (dyn_cast<PHINode>(v) == phi) continue;
++			// store will be rewritten using on later on
++			new StoreInst(v, alloc, bb->getTerminator());
++		}
++
++		LoadInst *phi_replace = new LoadInst(ty, alloc, phi->getName(), phi);
++		phi->replaceAllUsesWith(phi_replace);
++		phi->eraseFromParent();
++	}
++}
++
++void LinearizePass::shuffleBlocks(Function &F, size_t numlbl) {
++	std::vector<BasicBlock*> bbs;
++	std::vector<std::pair<BasicBlock *, BasicBlock*> > fallthroughs;
++	bbs.reserve(numlbl);
++	fallthroughs.reserve(F.size() - numlbl);
++	BasicBlock *last = nullptr;
++
++	dbgs() << "shuffling\n";
++
++	for (auto it = ++F.begin(); it != F.end(); ++it) {
++		if (labels.at(&*it).kind == LBL_FRESH) {
++			bbs.emplace(bbs.begin() + ((*rng)() % (bbs.size() + 1)), &*it);
++		} else {
++			fallthroughs.emplace_back(&*it, last);
++		}
++		last = &*it;
++	}
++
++	dbgs() << "shuffled\n";
++
++	BasicBlock *ip = &*--F.end();
++	for (BasicBlock *bb : bbs) {
++		bb->moveBefore(ip);
++	}
++	for (std::pair<BasicBlock *, BasicBlock *> &ft : fallthroughs) {
++		ft.first->moveAfter(ft.second);
++	}
++}
++
++size_t LinearizePass::getLabels(Function &F) {
++	labels.reserve(F.size());
++
++	BasicBlock *last = nullptr;
++
++	size_t numlbl = 0;
++
++	auto it = std::next(F.begin());
++
++	bool first = true;
++	for (; it != F.end(); ++it) {
++		BasicBlock *bb = &*it;
++		if (first) {
++			dbgs() << bb->getName() << ": fresh\n";
++			labels[bb] = label{LBL_FRESH, (*rng)()};
++			last = bb;
++			first = false;
++			++numlbl;
++			continue;
++		}
++
++		if (last == bb->getUniquePredecessor()) {
++			dbgs() << bb->getName() << ": fallthrough\n";
++			labels[bb] = label{LBL_FALLTHROUGH};
++			last = bb;
++			continue;
++		}
++
++		dbgs() << bb->getName() << ": fresh\n";
++		labels[bb] = label{LBL_FRESH, (*rng)()};
++		last = bb;
++		++numlbl;
++	}
++
++	return numlbl;
++}
++
++template <>
++void LinearizePass::linearizeIns<LoadInst>(LoadInst *ins, Value *on, AllocaInst *discard) {
++	Value *ptr = ins->getPointerOperand();
++	if (!isa<Instruction>(ptr))
++		return;
++	if (isa<AllocaInst>(ptr))
++		return;
++	IRBuilder<> Builder(ins);
++	*ins->op_begin() = Builder.CreateSelect(
++		on,
++		ins->getPointerOperand(),
++		Builder.CreatePointerCast(discard, ins->getPointerOperandType()));
++}
++
++template <>
++void LinearizePass::linearizeIns<StoreInst>(StoreInst *ins, Value *on, AllocaInst *discard) {
++	IRBuilder<> Builder(ins);
++	*std::next(ins->op_begin()) = Builder.CreateSelect(
++		on,
++		ins->getPointerOperand(),
++		Builder.CreatePointerCast(discard, ins->getPointerOperandType()));
++}
++
++template <>
++void LinearizePass::linearizeIns<AtomicCmpXchgInst>(AtomicCmpXchgInst *ins, Value *on, AllocaInst *discard) {
++	IRBuilder<> Builder(ins);
++	*ins->op_begin() = Builder.CreateSelect(
++		on,
++		ins->getPointerOperand(),
++		Builder.CreatePointerCast(discard, ins->getPointerOperand()->getType()));
++}
++
++template <>
++void LinearizePass::linearizeIns<AtomicRMWInst>(AtomicRMWInst *ins, Value *on, AllocaInst *discard) {
++	IRBuilder<> Builder(ins);
++	*ins->op_begin() = Builder.CreateSelect(
++		on,
++		ins->getPointerOperand(),
++		Builder.CreatePointerCast(discard, ins->getPointerOperand()->getType()));
++}
++
++template <>
++void LinearizePass::linearizeIns<CallInst>(CallInst *ins, Value *on, AllocaInst *discard) {
++	IRBuilder<> Builder(ins);
++	ins->setCalledOperand(
++		Builder.CreateSelect(on,
++			ins->getCalledOperand(),
++			Builder.CreatePointerCast(NopFun, ins->getCalledOperand()->getType())));
++}
++
++template <>
++void LinearizePass::linearizeIns<GetElementPtrInst>(GetElementPtrInst *ins, Value *on, AllocaInst *discard) {
++	ins->setIsInBounds(false);
++}
++
++template <>
++void LinearizePass::linearizeIns<BinaryOperator>(BinaryOperator *op, Value *on, AllocaInst *discard) {
++	IRBuilder<> Builder(op);
++	Type *typ = op->getType();
++	switch(op->getOpcode()) {
++	case Instruction::SDiv:
++	case Instruction::UDiv:
++	case Instruction::SRem:
++	case Instruction::URem:
++		if (isa<Constant>(op->getOperand(1))) return;
++		op->setOperand(1,
++			Builder.CreateOr(op->getOperand(1),
++				Builder.CreateZExtOrTrunc(
++					Builder.CreateXor(on, ConstantInt::getTrue(on->getType()))
++					, typ)));
++		break;
++	case Instruction::Shl:
++	case Instruction::AShr:
++	case Instruction::LShr:
++		if (isa<Constant>(op->getOperand(1))) return;
++		op->setOperand(1,
++			Builder.CreateAnd(op->getOperand(1), ConstantInt::get(typ, typ->getIntegerBitWidth() - 1)));
++		break;
++	default:
++		break;
++	}
++}
++
++Value *LinearizePass::prepareBlock(BasicBlock &bb, Value *on, AllocaInst *selector, label label, AllocaInst *discard) {
++	std::vector<Instruction *> todo;
++	std::vector<CallInst *> lifetimeMarker;
++	for (Instruction &ins : bb) {
++		// TODO elaborate intrinsic handling
++		CallInst *ci = dyn_cast<CallInst>(&ins);
++		if (ci && (ci->getIntrinsicID() == Intrinsic::lifetime_start ||
++				ci->getIntrinsicID() == Intrinsic::lifetime_end)) {
++			lifetimeMarker.push_back(ci);
++			dbgs() << "removing Lifetime Marker ";
++			ci->print(dbgs());
++			dbgs() << "\n";
++			continue;
++		} else if (ci && ci->getIntrinsicID() != Intrinsic::not_intrinsic) {
++			bool removed = false;
++			for (Use &u : ci->args()) {
++				if (isa<MetadataAsValue>(u.get())) {
++					dbgs() << "removing intrinsic with metadata parameter: \n\t";
++					ci->print(dbgs());
++					dbgs() << "\n";
++					lifetimeMarker.push_back(ci);
++					removed = true;
++					break;
++				}
++			}
++			if (removed)
++				continue;
++
++			dbgs() << "intrinsic was not removed: \n\t";
++			ci->print(dbgs());
++			dbgs() << "\n";
++//			llvm_unreachable("call to intrinsic within function");
++		}
++
++		if (isa<LoadInst>(&ins) ||
++			isa<StoreInst>(&ins) ||
++			isa<AtomicCmpXchgInst>(&ins) ||
++			isa<AtomicRMWInst>(&ins) ||
++			isa<GetElementPtrInst>(&ins) ||
++			//isa<PHINode>(&ins) ||
++			(ci && ci->getIntrinsicID() == Intrinsic::not_intrinsic) ||
++//			ci ||
++			ins.getOpcode() == Instruction::SDiv ||
++			ins.getOpcode() == Instruction::UDiv ||
++			ins.getOpcode() == Instruction::URem ||
++			ins.getOpcode() == Instruction::SRem ||
++			ins.getOpcode() == Instruction::Shl ||
++			ins.getOpcode() == Instruction::AShr ||
++			ins.getOpcode() == Instruction::LShr) {
++			todo.push_back(&ins);
++		}
++	}
++
++	for (CallInst *ins : lifetimeMarker) {
++		ins->eraseFromParent();
++	}
++
++	if (label.kind == LBL_FRESH) {
++		IRBuilder<> Builder(bb.getFirstNonPHIOrDbgOrLifetime());
++		on = Builder.CreateICmpEQ(
++			Builder.CreateLoad(selector->getAllocatedType(), selector),
++			Builder.getInt64(label.fresh), Twine(bb.getName(), ".on"));
++	}
++
++	for (Instruction *ins : todo) {
++		LoadInst *li = dyn_cast<LoadInst>(ins);
++		if (li) {
++			linearizeIns(li, on, discard);
++			continue;
++		}
++
++		StoreInst *si = dyn_cast<StoreInst>(ins);
++		if (si) {
++			linearizeIns(si, on, discard);
++			continue;
++		}
++
++		AtomicCmpXchgInst *xchg = dyn_cast<AtomicCmpXchgInst>(ins);
++		if (xchg) {
++			linearizeIns(xchg, on, discard);
++			continue;
++		}
++
++		AtomicRMWInst *rmw = dyn_cast<AtomicRMWInst>(ins);
++		if (rmw) {
++			linearizeIns(rmw, on, discard);
++			continue;
++		}
++
++		CallInst *call = dyn_cast<CallInst>(ins);
++		if (call) {
++			linearizeIns(call, on, discard);
++			continue;
++		}
++
++		BinaryOperator *bop = dyn_cast<BinaryOperator>(ins);
++		if (bop) {
++			linearizeIns(bop, on, discard);
++			continue;
++		}
++
++		GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ins);
++		if (gep) {
++			linearizeIns(gep, on ,discard);
++			continue;
++		}
++	}
++
++	return on;
++}
++
++std::pair<size_t, Align> LinearizePass::getDiscardSizeAlign(Function &F, const DataLayout &DataLayout) {
++	size_t size = DataLayout.getPointerSize();
++	Align align = DataLayout.getPointerPrefAlignment();
++	for (BasicBlock &bb : F) {
++		for (Instruction &ins : bb) {
++			StoreInst *si = dyn_cast<StoreInst>(&ins);
++			if (si) {
++				si->print(dbgs());
++				dbgs() << "\n";
++				Type *t = si->getValueOperand()->getType();
++				size_t tmp = DataLayout.getTypeAllocSize(t);
++				Align tmpalign = DataLayout.getValueOrABITypeAlignment(si->getAlign(), t);
++				if (tmp > size)
++					size = tmp;
++				if (tmpalign > align)
++					align = tmpalign;
++				continue;
++			}
++
++			LoadInst *li = dyn_cast<LoadInst>(&ins);
++			if (li) {
++				li->print(dbgs());
++				dbgs() << "\n";
++				size_t tmp = DataLayout.getTypeAllocSize(li->getType());
++				Align tmpalign = DataLayout.getValueOrABITypeAlignment(li->getAlign(), li->getType());
++				if (tmp > size)
++					size = tmp;
++				if (tmpalign > align)
++					align = tmpalign;
++				continue;
++			}
++
++			AtomicCmpXchgInst *cmpXchg = dyn_cast<AtomicCmpXchgInst>(&ins);
++			if (cmpXchg) {
++				cmpXchg->print(dbgs());
++				dbgs() << "\n";
++				Type *t = cmpXchg->getNewValOperand()->getType();
++				size_t tmp = DataLayout.getTypeAllocSize(t);
++				Align tmpalign = DataLayout.getValueOrABITypeAlignment(cmpXchg->getAlign(), t);
++				if (tmp > size)
++					size = tmp;
++				if (tmpalign > align)
++					align = tmpalign;
++				continue;
++			}
++
++			AtomicRMWInst *rmw = dyn_cast<AtomicRMWInst>(&ins);
++			if (rmw) {
++				rmw->print(dbgs());
++				dbgs() << "\n";
++				size_t tmp = DataLayout.getTypeAllocSize(rmw->getType());
++				Align tmpalign = DataLayout.getValueOrABITypeAlignment(rmw->getAlign(), rmw->getType());
++				if (tmp > size)
++					size = tmp;
++				if (tmpalign > align)
++					align = tmpalign;
++			}
++		}
++	}
++
++	return {size, align};
++}
++
++bool LinearizePass::runOnFunction(Function &F) {
++	dbgs() << "linearizing " << F.getName() << "\n";
++	labels.clear();
++
++	auto it = F.getEntryBlock().begin();
++	while(isa<AllocaInst>(it) ||
++		(isa<CallInst>(it) && cast<CallInst>(it)->getIntrinsicID() != Intrinsic::not_intrinsic) ||
++		isa<StoreInst>(it)) {
++		++it;
++	}
++
++	// check state of function
++	// check terminators
++	for (BasicBlock &bb : F) {
++		Instruction *ins = bb.getTerminator();
++		if (!isa<BranchInst>(ins) &&
++			!isa<ReturnInst>(ins)) {
++			dbgs() << "incompatible terminator: ";
++			ins->print(dbgs());
++			return false;
++		}
++
++	}
++
++	// search for allocas within the function body
++	for (auto it2 = it; it2 != F.getEntryBlock().end(); ++it2) {
++		if (isa<AllocaInst>(&*it2)) {
++			dbgs() << "found alloca within function body, aborting\n";
++			return false;
++		}
++	}
++
++	for (auto it = ++F.begin(); it != F.end(); ++it) {
++		for (Instruction &ins : *it) {
++			if (isa<AllocaInst>(&ins)) {
++				dbgs() << "found alloca within function body, aborting\n";
++				return false;
++			}
++		}
++	}
++
++	// TODO: eliminate phis
++	eliminatePhis(F);
++
++	// create auxiliary local variables
++	std::pair<size_t, Align> discardSizeAlign = getDiscardSizeAlign(F, F.getParent()->getDataLayout());
++
++	Instruction *split = &*it;
++	AllocaInst *discard;
++	AllocaInst *selector;
++	AllocaInst *retval;
++	{
++		IRBuilder<> Builder(F.begin()->getFirstNonPHI());
++		discard = Builder.CreateAlloca(ArrayType::get(Builder.getInt8Ty(), discardSizeAlign.first), nullptr, "discard");
++		discard->setAlignment(discardSizeAlign.second);
++		selector = Builder.CreateAlloca(Builder.getInt64Ty(), nullptr, "selector");
++		if (!F.getReturnType()->isVoidTy())
++			retval = Builder.CreateAlloca(F.getReturnType(), nullptr, "retval");
++	}
++
++	SplitBlock(&F.getEntryBlock(), split);
++
++	F.print(dbgs());
++	dbgs() << "\n";
++
++	size_t numlbl = getLabels(F);
++
++	// TODO: shuffle blocks
++	shuffleBlocks(F, numlbl);
++
++	resolveContinuityErrors(F);
++
++	F.print(dbgs());
++	dbgs() << "\n";
++
++	size_t finlbl = (*rng)();
++	Value *on = nullptr;
++	for (auto bbit = ++F.begin(); bbit != F.end(); ++bbit) {
++		on = prepareBlock(*bbit, on, selector, labels[&*bbit], discard);
++		dbgs() << "fixing continuation in " << bbit->getName() << "\n";
++		BranchInst *br = dyn_cast<BranchInst>(bbit->getTerminator());
++		IRBuilder<> Builder(bbit->getTerminator());
++		if (br) {
++			label tl = labels[br->getSuccessor(0)];
++			if (br->isConditional()) {
++				label fl = labels[br->getSuccessor(1)];
++				if (tl.kind != LBL_FALLTHROUGH && fl.kind != LBL_FALLTHROUGH) {
++					Builder.CreateStore(
++						Builder.CreateSelect(
++							br->getCondition(),
++							Builder.getInt64(tl.fresh),
++							Builder.getInt64(fl.fresh)),
++						Builder.CreateSelect(
++							on,
++							selector,
++							Builder.CreatePointerCast(discard, Builder.getInt64Ty()->getPointerTo())));
++					continue;
++				}
++				Value *ptr;
++				size_t val;
++				if (tl.kind == LBL_FRESH) {
++					ptr = Builder.CreateSelect(Builder.CreateAnd(br->getCondition(), on)
++						, selector
++						, Builder.CreatePointerCast(discard, Builder.getInt64Ty()->getPointerTo()));
++					val = tl.fresh;
++					on = Builder.CreateAnd(on, Builder.CreateNot(br->getCondition()));
++				} else {
++					assert(fl.kind == LBL_FRESH);
++					ptr = Builder.CreateSelect(Builder.CreateOr(br->getCondition(), Builder.CreateNot(on))
++						, Builder.CreatePointerCast(discard, Builder.getInt64Ty()->getPointerTo())
++						, selector);
++					val = fl.fresh;
++					on = Builder.CreateAnd(on, br->getCondition());
++				}
++
++				Builder.CreateStore(Builder.getInt64(val), ptr);
++				continue;
++			}
++
++			if (tl.kind == LBL_FRESH && on == nullptr) {
++				Builder.CreateStore(Builder.getInt64(tl.fresh), selector);
++				continue;
++			}
++
++			if (tl.kind == LBL_FRESH) {
++				Builder.CreateStore(Builder.getInt64(tl.fresh),
++					Builder.CreateSelect(
++						on,
++						selector,
++						Builder.CreatePointerCast(discard, Builder.getInt64Ty()->getPointerTo())));
++				continue;
++			}
++
++			assert(tl.kind == LBL_FALLTHROUGH);
++			continue;
++		}
++
++		dbgs() << "rewriting return instruction\n";
++		ReturnInst *ret = cast<ReturnInst>(bbit->getTerminator());
++		Value *rv = ret->getReturnValue();
++		if (rv) {
++			Builder.CreateStore(rv,
++				Builder.CreateSelect(on, retval, Builder.CreatePointerCast(discard, rv->getType()->getPointerTo())));
++		}
++		Builder.CreateStore(Builder.getInt64(finlbl),
++			Builder.CreateSelect(on, selector, Builder.CreatePointerCast(discard, Builder.getInt64Ty()->getPointerTo())));
++	}
++
++	// create common exit block
++	BasicBlock *commonFin = BasicBlock::Create(F.getParent()->getContext(), "fin", &F);
++	{
++		IRBuilder<> Builder(commonFin);
++		if (F.getReturnType()->isVoidTy()) {
++			Builder.CreateRetVoid();
++		} else {
++			Builder.CreateRet(
++				Builder.CreateLoad(F.getReturnType(), retval, "retval"));
++		}
++	}
++
++	// merge fallthroughs
++	{
++		BasicBlock *last = &*++F.begin();
++		SmallVector<BasicBlock *, 64> todel;
++
++		for (auto it = ++++F.begin(); it != --F.end(); ++it) {
++			if (labels[&*it].kind == LBL_FRESH) {
++				last = &*it;
++				continue;
++			}
++
++			dbgs() << "merging fallthrough " << it->getName() << " into " << last->getName() << "\n";
++
++			// merge bb
++			last->getTerminator()->eraseFromParent();
++			last->getInstList().splice(last->end(), it->getInstList(), it->begin(), it->end());
++			todel.push_back(&*it);
++		}
++
++		for (BasicBlock *bb : todel)
++			bb->eraseFromParent();
++	}
++
++	// merge bbs
++	{
++		std::vector<BasicBlock*> bbs;
++		bbs.reserve(F.size() - 2);
++
++		// accumulate instruction in it
++		BasicBlock *tar = BasicBlock::Create(F.getParent()->getContext(), "merged", &F, &*std::next(F.begin()));
++
++		// rewire branch from entry block
++		new StoreInst(
++			ConstantInt::get(IntegerType::get(F.getParent()->getContext(), 64), labels[F.begin()->getSingleSuccessor()].fresh, false)
++			, selector
++			, F.begin()->getTerminator());
++		cast<BranchInst>(F.begin()->getTerminator())->setSuccessor(0, tar);
++
++		std::list<BasicBlock *> bblist;
++		size_t num_inst = 0;
++		for (auto it = std::next(std::next(F.begin())); std::next(it) != F.end(); ++it) {
++			it->getTerminator()->eraseFromParent();
++			num_inst += it->size();
++			bblist.push_back(&*it);
++		}
++
++//		dbgs() << "built list\n";
++
++		while (num_inst) {
++//			dbgs() << "instructions left: " << num_inst << "\n";
++			auto it = bblist.begin();
++			size_t pos = (*rng)() % num_inst;
++			while (pos > (*it)->size()) {
++//				dbgs() << "instructions left (" << (*it)->getName() << "): " << (*it)->size() << "\n";
++				pos -= (*it)->size();
++				++it;
++			}
++			/*
++			for (size_t pos = (*rng)() % num_inst; pos > (*it)->size(); pos -= (*it)->size()) {
++				++it;
++			}*/
++			size_t left = (*it)->size();
++			size_t num = std::min(left, 3 + (*rng)() % 3);
++//			dbgs() << "taking " << num << " instructions from " << (*it)->getName() << "\n";
++			auto ei = (*it)->begin();
++			for (size_t i = 0; i < num; ++i) {
++				assert(ei != (*it)->end());
++				ei = std::next(ei);
++			}
++			//std::advance(ei, num);
++			tar->getInstList().splice(tar->end(), (*it)->getInstList(), (*it)->begin(), ei);
++			num_inst -= num;
++			if (num == left) {
++//				dbgs() << "block " << (*it)->size() << " is depelted - erasing\n";
++				BasicBlock *todel = *it;
++				bblist.erase(it);
++				todel->eraseFromParent();
++			}
++		}
++
++		IRBuilder<> Builder(tar);
++		Builder.CreateCondBr(
++			Builder.CreateICmpEQ(
++				Builder.getInt64(finlbl),
++				Builder.CreateLoad(Builder.getInt64Ty(), selector, "tag"),
++				"isExit"),
++			commonFin,
++			tar);
++	}
++
++	F.print(dbgs());
++	dbgs() << "\n";
++
++	return true;
++}
++
++PreservedAnalyses LinearizePass::run(Module &M, ModuleAnalysisManager &MAM) {
++	SmallString<64> rngstr = {"obf.linearize"};
++	rng = M.createRNG(rngstr);
++
++	NopFun = Function::Create(FunctionType::get(IntegerType::get(M.getContext(), 8)->getPointerTo(), {}, true), GlobalValue::LinkOnceODRLinkage, "__obf_nop", M);
++	NopFun->setVisibility(GlobalValue::HiddenVisibility);
++
++	for (Function &F : M) {
++		if (F.isDeclaration() || F.hasOptNone())
++			continue;
++
++		runOnFunction(F);
++	}
++
++	{
++		BasicBlock *bb = BasicBlock::Create(M.getContext(), "entry", NopFun);
++		ReturnInst::Create(M.getContext(), Constant::getNullValue(NopFun->getReturnType()), bb);
++	}
++
++	return PreservedAnalyses::none();
++}
++
++namespace {
++	struct Linearize : public ModulePass {
++		static char ID;
++		Linearize() : ModulePass(ID) {
++			initializeLinearizePass(*PassRegistry::getPassRegistry());
++		}
++
++		bool runOnModule(Module &M) override;
++	};
++}
++
++char Linearize::ID = 0;
++INITIALIZE_PASS(Linearize, "linearize", "control flow linearization", false, false)
++
++ModulePass *llvm::createLinearizePass() {return new Linearize(); }
++
++bool Linearize::runOnModule(Module &M) {
++	return false;
++}
++
++/*
++extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
++	return {LLVM_PLUGIN_API_VERSION, "linearize", "0.1", [](PassBuilder &PB) {
++		PB.registerOptimizerLastEPCallback([](ModulePassManager &MPM, OptimizationLevel Ol) {
++			MPM.addPass(Linearize());
++		});
++	}};
++}
++*/
+\ No newline at end of file
+diff --git a/llvm/lib/Transforms/Scalar/Scalar.cpp b/llvm/lib/Transforms/Scalar/Scalar.cpp
+index 5ab9e2557..6fd3e4da6 100644
+--- a/llvm/lib/Transforms/Scalar/Scalar.cpp
++++ b/llvm/lib/Transforms/Scalar/Scalar.cpp
+@@ -111,6 +111,8 @@ void llvm::initializeScalarOpts(PassRegistry &Registry) {
+   initializeLoopLoadEliminationPass(Registry);
+   initializeLoopSimplifyCFGLegacyPassPass(Registry);
+   initializeLoopVersioningLegacyPassPass(Registry);
++
++  initializeLinearizePass(Registry);
+ }
+ 
+ void LLVMAddLoopSimplifyCFGPass(LLVMPassManagerRef PM) {
