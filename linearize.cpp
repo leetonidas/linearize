@@ -39,6 +39,7 @@ struct Linearize : public PassInfoMixin<Linearize> {
 	size_t getLabels(Function &F);
 	void shuffleBlocks(Function &F, size_t numlbl);
 	void eliminatePhis(Function &F);
+	void handleIntrinsics(BasicBlock &BB);
 	void resolveContinuityErrors(Function &F);
 	Value *prepareBlock(BasicBlock &bb, Value *on, AllocaInst *selector, label label, AllocaInst *discard);
 
@@ -51,6 +52,92 @@ struct Linearize : public PassInfoMixin<Linearize> {
 };
 }
 
+bool removeIntrin(CallInst *ci) {
+	ci->eraseFromParent();
+	return true;
+}
+
+bool translateMemset(CallInst *ci) {
+	LLVMContext &ctx = ci->getContext();
+	Module *M = ci->getParent()->getParent()->getParent();
+	auto &dl = M->getDataLayout();
+	IntegerType *sizet = IntegerType::getIntNTy(ctx, dl.getMaxIndexSizeInBits());
+	IRBuilder<> Builder(ci);
+
+	FunctionType *ft = FunctionType::get(Type::getVoidTy(ctx), {Type::getInt8PtrTy(ctx), Type::getInt32Ty(ctx), sizet}, false);
+	FunctionCallee fc = M->getOrInsertFunction("memset", ft);
+
+	Builder.CreateCall(fc,
+		{ ci->getOperand(0)
+		, Builder.CreateZExt(ci->getOperand(1)
+		, Builder.getInt32Ty()), Builder.CreateZExtOrTrunc(ci->getOperand(2), sizet)});
+
+	ci->eraseFromParent();
+	return true;
+}
+
+bool translateMemcpy(CallInst *ci) {
+	LLVMContext &ctx = ci->getContext();
+	Module *M = ci->getParent()->getParent()->getParent();
+	auto &dl = M->getDataLayout();
+	IntegerType *sizet = IntegerType::getIntNTy(ctx, dl.getMaxIndexSizeInBits());
+	IRBuilder<> Builder(ci);
+
+	FunctionType *ft = FunctionType::get(Type::getVoidTy(ctx), {Type::getInt8PtrTy(ctx), Type::getInt8PtrTy(ctx) , sizet}, false);
+	FunctionCallee fc = M->getOrInsertFunction("memcpy", ft);
+
+	Builder.CreateCall(fc,
+		{ ci->getOperand(0)
+		, ci->getOperand(1)
+		, Builder.CreateZExtOrTrunc(ci->getOperand(2), sizet)});
+
+	ci->eraseFromParent();
+	return true;
+}
+
+static std::unordered_map<Intrinsic::ID, std::function<bool(CallInst*)> > intrinMap =
+	{ {Intrinsic::lifetime_start, removeIntrin}
+	, {Intrinsic::lifetime_end,   removeIntrin}
+	, {Intrinsic::memset,		  translateMemset}
+	, {Intrinsic::memcpy,		  translateMemcpy}};
+
+void Linearize::handleIntrinsics(BasicBlock &BB) {
+	SmallVector<CallInst *, 64> intrins;
+
+	for (Instruction &Ins : BB) {
+		CallInst *ci = dyn_cast<CallInst>(&Ins);
+		if (!ci || ci->getIntrinsicID() == Intrinsic::not_intrinsic)
+			continue;
+		intrins.push_back(ci);
+	}
+
+	for (CallInst *ci : intrins) {
+		Intrinsic::ID id = ci->getIntrinsicID();
+		AttributeList al = Intrinsic::getAttributes(BB.getContext(), id);
+		if (!Intrinsic::isOverloaded(id))
+			dbgs() << "Intrinsic " << Intrinsic::getName(id) << " has Attribtues:\n";
+		else
+			dbgs() << "Intrinsic " << Intrinsic::getBaseName(id) << " has Attribtues:\n";
+		al.print(dbgs());
+
+		if (al.hasFnAttr(Attribute::ReadNone) && al.hasFnAttr(Attribute::WillReturn)) {
+			dbgs() << "Ignoring due to readnone\n";
+			continue;
+		}
+
+		auto it = intrinMap.find(id);
+		if (it != intrinMap.end()) {
+			assert(it->second(ci));
+			continue;
+		}
+
+		errs() << "no replacement function found for\n";
+		ci->print(errs());
+		errs() << "\n";
+		llvm_unreachable("no intrinsic translation");
+	}
+}
+
 void Linearize::resolveContinuityErrors(Function &F) {
 	SmallVector<Instruction *> tofix;
 	for (auto it = ++F.begin(); it != F.end(); ++it) {
@@ -58,14 +145,7 @@ void Linearize::resolveContinuityErrors(Function &F) {
 		for (Instruction &ins : *it) {
 			for (Use &u : ins.uses()) {
 				Instruction *iu = cast<Instruction>(u.getUser());
-				PHINode *pu = dyn_cast<PHINode>(iu);
-				if (pu) {
-					if (pu->getIncomingBlock(u) == home) {
-						continue;
-					}
-					tofix.push_back(&ins);
-					break;
-				}
+				assert(!isa<PHINode>(iu) && "phi has not been eliminated");
 				if (iu->getParent() == home)
 					continue;
 				tofix.push_back(&ins);
@@ -149,8 +229,21 @@ void Linearize::eliminatePhis(Function &F) {
 			BasicBlock *bb = phi->getIncomingBlock(i);
 			if (phi->getBasicBlockIndex(bb) != i) continue;
 			Value *v = phi->getIncomingValue(i);
-			// ignore self references
-			if (dyn_cast<PHINode>(v) == phi) continue;
+
+			// self references can not be ignored in general see:
+			//
+			// A -> B; (phi a)
+			// B -> A; (phi a = a + 1)
+			// B -> C;
+			// C -> A; (phi a = a) - self reference
+			//
+			// a.phi.rewrite will always be overwritten in B
+			// and would need to be reset to the original value in C
+			//
+			// mutliple writes to a.phi.rewrite are fine only if
+			// the last write is corresponding to the incoming edge of the phi
+			// if (dyn_cast<PHINode>(v) == phi) continue;
+
 			// store will be rewritten using on later on
 			new StoreInst(v, alloc, bb->getTerminator());
 		}
@@ -312,36 +405,15 @@ void Linearize::linearizeIns<BinaryOperator>(BinaryOperator *op, Value *on, Allo
 
 Value *Linearize::prepareBlock(BasicBlock &bb, Value *on, AllocaInst *selector, label label, AllocaInst *discard) {
 	std::vector<Instruction *> todo;
-	std::vector<CallInst *> lifetimeMarker;
+
 	for (Instruction &ins : bb) {
 		// TODO elaborate intrinsic handling
 		CallInst *ci = dyn_cast<CallInst>(&ins);
-		if (ci && (ci->getIntrinsicID() == Intrinsic::lifetime_start ||
-				ci->getIntrinsicID() == Intrinsic::lifetime_end)) {
-			lifetimeMarker.push_back(ci);
-			dbgs() << "removing Lifetime Marker ";
+		if (ci && ci->getIntrinsicID() == Intrinsic::not_intrinsic) {
+			dbgs() << "removing addtributes from:";
 			ci->print(dbgs());
 			dbgs() << "\n";
-			continue;
-		} else if (ci && ci->getIntrinsicID() != Intrinsic::not_intrinsic) {
-			bool removed = false;
-			for (Use &u : ci->args()) {
-				if (isa<MetadataAsValue>(u.get())) {
-					dbgs() << "removing intrinsic with metadata parameter: \n\t";
-					ci->print(dbgs());
-					dbgs() << "\n";
-					lifetimeMarker.push_back(ci);
-					removed = true;
-					break;
-				}
-			}
-			if (removed)
-				continue;
-
-			dbgs() << "intrinsic was not removed: \n\t";
-			ci->print(dbgs());
-			dbgs() << "\n";
-//			llvm_unreachable("call to intrinsic within function");
+			ci->setAttributes(AttributeList::get(ci->getContext(), ArrayRef<AttributeList>()));
 		}
 
 		if (isa<LoadInst>(&ins) ||
@@ -349,9 +421,7 @@ Value *Linearize::prepareBlock(BasicBlock &bb, Value *on, AllocaInst *selector, 
 			isa<AtomicCmpXchgInst>(&ins) ||
 			isa<AtomicRMWInst>(&ins) ||
 			isa<GetElementPtrInst>(&ins) ||
-			//isa<PHINode>(&ins) ||
 			(ci && ci->getIntrinsicID() == Intrinsic::not_intrinsic) ||
-//			ci ||
 			ins.getOpcode() == Instruction::SDiv ||
 			ins.getOpcode() == Instruction::UDiv ||
 			ins.getOpcode() == Instruction::URem ||
@@ -361,10 +431,6 @@ Value *Linearize::prepareBlock(BasicBlock &bb, Value *on, AllocaInst *selector, 
 			ins.getOpcode() == Instruction::LShr) {
 			todo.push_back(&ins);
 		}
-	}
-
-	for (CallInst *ins : lifetimeMarker) {
-		ins->eraseFromParent();
 	}
 
 	if (label.kind == LBL_FRESH) {
@@ -525,6 +591,9 @@ bool Linearize::runOnFunction(Function &F) {
 		}
 	}
 
+	for (BasicBlock &BB : F)
+		handleIntrinsics(BB);
+
 	// TODO: eliminate phis
 	eliminatePhis(F);
 
@@ -546,8 +615,8 @@ bool Linearize::runOnFunction(Function &F) {
 
 	SplitBlock(&F.getEntryBlock(), split);
 
-	F.print(dbgs());
-	dbgs() << "\n";
+//	F.print(dbgs());
+//	dbgs() << "\n";
 
 	size_t numlbl = getLabels(F);
 
@@ -556,8 +625,8 @@ bool Linearize::runOnFunction(Function &F) {
 
 	resolveContinuityErrors(F);
 
-	F.print(dbgs());
-	dbgs() << "\n";
+//	F.print(dbgs());
+//	dbgs() << "\n";
 
 	size_t finlbl = (*rng)();
 	Value *on = nullptr;
@@ -589,14 +658,14 @@ bool Linearize::runOnFunction(Function &F) {
 						, selector
 						, Builder.CreatePointerCast(discard, Builder.getInt64Ty()->getPointerTo()));
 					val = tl.fresh;
-					on = Builder.CreateAnd(on, Builder.CreateNot(br->getCondition()));
+					on = Builder.CreateAnd(on, Builder.CreateNot(br->getCondition()), Twine(br->getSuccessor(1)->getName(), ".on"));
 				} else {
 					assert(fl.kind == LBL_FRESH);
 					ptr = Builder.CreateSelect(Builder.CreateOr(br->getCondition(), Builder.CreateNot(on))
 						, Builder.CreatePointerCast(discard, Builder.getInt64Ty()->getPointerTo())
 						, selector);
 					val = fl.fresh;
-					on = Builder.CreateAnd(on, br->getCondition());
+					on = Builder.CreateAnd(on, br->getCondition(), Twine(br->getSuccessor(0)->getName(), ".on"));
 				}
 
 				Builder.CreateStore(Builder.getInt64(val), ptr);
@@ -690,8 +759,18 @@ bool Linearize::runOnFunction(Function &F) {
 			bblist.push_back(&*it);
 		}
 
-//		dbgs() << "built list\n";
+		/*
+		// just paste the basicblocks one after the other without interleaving 
+		for (BasicBlock *bb : bblist) {
+			tar->getInstList().splice(tar->end(), bb->getInstList(), bb->begin(), bb->end());
+			bb->eraseFromParent();
+		}
+		*/
 
+		// this loop interleaves the instructions from all basic blocks to make it more difficult
+		// to separate basic blocks. Unfortunately this reintroduces jumps (on x86) as the register
+		// preassure is significantly higher. If you don't need or want this hardening you can simply
+		// merge all basic blocks with the code above
 		while (num_inst) {
 //			dbgs() << "instructions left: " << num_inst << "\n";
 			auto it = bblist.begin();
@@ -701,10 +780,12 @@ bool Linearize::runOnFunction(Function &F) {
 				pos -= (*it)->size();
 				++it;
 			}
+
 			/*
 			for (size_t pos = (*rng)() % num_inst; pos > (*it)->size(); pos -= (*it)->size()) {
 				++it;
 			}*/
+
 			size_t left = (*it)->size();
 			size_t num = std::min(left, 3 + (*rng)() % 3);
 //			dbgs() << "taking " << num << " instructions from " << (*it)->getName() << "\n";
@@ -748,7 +829,7 @@ PreservedAnalyses Linearize::run(Module &M, ModuleAnalysisManager &MAM) {
 	NopFun->setVisibility(GlobalValue::HiddenVisibility);
 
 	for (Function &F : M) {
-		if (F.isDeclaration())
+		if (F.isDeclaration() || F.hasOptNone() || F.isVarArg())
 			continue;
 
 		runOnFunction(F);
