@@ -323,9 +323,7 @@ size_t Linearize::getLabels(Function &F) {
 template <>
 void Linearize::linearizeIns<LoadInst>(LoadInst *ins, Value *on, AllocaInst *discard) {
 	Value *ptr = ins->getPointerOperand();
-	if (!isa<Instruction>(ptr))
-		return;
-	if (isa<AllocaInst>(ptr))
+	if (isa<Constant>(ptr) || isa<AllocaInst>(ptr))
 		return;
 	IRBuilder<> Builder(ins);
 	*ins->op_begin() = Builder.CreateSelect(
