@@ -305,10 +305,10 @@ index eb008c159..750dd6d9a 100644
    ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms/Scalar
 diff --git a/llvm/lib/Transforms/Scalar/Linearize.cpp b/llvm/lib/Transforms/Scalar/Linearize.cpp
 new file mode 100644
-index 000000000..d358cf5fc
+index 000000000..7a47cd985
 --- /dev/null
 +++ b/llvm/lib/Transforms/Scalar/Linearize.cpp
-@@ -0,0 +1,844 @@
+@@ -0,0 +1,842 @@
 +#include "llvm/IR/PassManager.h"
 +#include "llvm/IR/IRBuilder.h"
 +#include "llvm/IR/DerivedTypes.h"
@@ -604,9 +604,7 @@ index 000000000..d358cf5fc
 +template <>
 +void LinearizePass::linearizeIns<LoadInst>(LoadInst *ins, Value *on, AllocaInst *discard) {
 +	Value *ptr = ins->getPointerOperand();
-+	if (!isa<Instruction>(ptr))
-+		return;
-+	if (isa<AllocaInst>(ptr))
++	if (isa<Constant>(ptr) || isa<AllocaInst>(ptr))
 +		return;
 +	IRBuilder<> Builder(ins);
 +	*ins->op_begin() = Builder.CreateSelect(
