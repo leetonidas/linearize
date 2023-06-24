@@ -120,7 +120,7 @@ void Linearize::handleIntrinsics(BasicBlock &BB) {
 			dbgs() << "Intrinsic " << Intrinsic::getBaseName(id) << " has Attribtues:\n";
 		al.print(dbgs());
 
-		if (al.hasFnAttr(Attribute::ReadNone) && al.hasFnAttr(Attribute::WillReturn)) {
+		if (ci->doesNotAccessMemory() && al.hasFnAttr(Attribute::WillReturn)) {
 			dbgs() << "Ignoring due to readnone\n";
 			continue;
 		}
@@ -726,7 +726,7 @@ bool Linearize::runOnFunction(Function &F) {
 
 			// merge bb
 			last->getTerminator()->eraseFromParent();
-			last->getInstList().splice(last->end(), it->getInstList(), it->begin(), it->end());
+			last->splice(last->end(), &*it);
 			todel.push_back(&*it);
 		}
 
@@ -760,7 +760,7 @@ bool Linearize::runOnFunction(Function &F) {
 		/*
 		// just paste the basicblocks one after the other without interleaving 
 		for (BasicBlock *bb : bblist) {
-			tar->getInstList().splice(tar->end(), bb->getInstList(), bb->begin(), bb->end());
+			tar->splice(tar->end(), &*bb);
 			bb->eraseFromParent();
 		}
 		*/
@@ -793,7 +793,7 @@ bool Linearize::runOnFunction(Function &F) {
 				ei = std::next(ei);
 			}
 			//std::advance(ei, num);
-			tar->getInstList().splice(tar->end(), (*it)->getInstList(), (*it)->begin(), ei);
+			tar->splice(tar->end(), *it, (*it)->begin(), ei);
 			num_inst -= num;
 			if (num == left) {
 //				dbgs() << "block " << (*it)->size() << " is depelted - erasing\n";

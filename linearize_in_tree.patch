@@ -1,24 +1,10 @@
-diff --git a/clang/CMakeLists.txt b/clang/CMakeLists.txt
-index e3bc4b468..14185d8c0 100644
---- a/clang/CMakeLists.txt
-+++ b/clang/CMakeLists.txt
-@@ -393,7 +393,8 @@ if(NOT DEFINED CLANG_VERSION_PATCHLEVEL)
-   set(CLANG_VERSION_PATCHLEVEL ${LLVM_VERSION_PATCH})
- endif()
- # Unlike PACKAGE_VERSION, CLANG_VERSION does not include LLVM_VERSION_SUFFIX.
--set(CLANG_VERSION "${CLANG_VERSION_MAJOR}.${CLANG_VERSION_MINOR}.${CLANG_VERSION_PATCHLEVEL}")
-+#set(CLANG_VERSION "${CLANG_VERSION_MAJOR}.${CLANG_VERSION_MINOR}.${CLANG_VERSION_PATCHLEVEL}")
-+set(CLANG_VERSION "hxpCTF.iead.DieCompilerversionDieSoSchoenHatGeprickeltInMeineBauchnabel")
- message(STATUS "Clang version: ${CLANG_VERSION}")
- 
- # Configure the Version.inc file.
 diff --git a/clang/include/clang/Basic/CodeGenOptions.def b/clang/include/clang/Basic/CodeGenOptions.def
-index ef7957979..d04cd7337 100644
+index 436226c6f..5bf05e124 100644
 --- a/clang/include/clang/Basic/CodeGenOptions.def
 +++ b/clang/include/clang/Basic/CodeGenOptions.def
-@@ -482,6 +482,10 @@ ENUM_CODEGENOPT(ZeroCallUsedRegs, llvm::ZeroCallUsedRegs::ZeroCallUsedRegsKind,
- /// Whether to use opaque pointers.
- CODEGENOPT(OpaquePointers, 1, 0)
+@@ -504,6 +504,10 @@ CODEGENOPT(OpaquePointers, 1, 0)
+ /// non-deleting destructors. (No effect on Microsoft ABI.)
+ CODEGENOPT(CtorDtorReturnThis, 1, 0)
  
 +
 +CODEGENOPT(LinearizeCFG  , 1, 0) ///< Control whether control flow is linearized.
@@ -28,10 +14,10 @@ index ef7957979..d04cd7337 100644
  #undef ENUM_CODEGENOPT
  #undef VALUE_CODEGENOPT
 diff --git a/clang/include/clang/Driver/Options.td b/clang/include/clang/Driver/Options.td
-index 3cab37b21..1a1162ce1 100644
+index 652c15afc..121df8e4d 100644
 --- a/clang/include/clang/Driver/Options.td
 +++ b/clang/include/clang/Driver/Options.td
-@@ -2910,6 +2910,12 @@ def ffinite_loops: Flag<["-"],  "ffinite-loops">, Group<f_Group>,
+@@ -2986,6 +2986,12 @@ def ffinite_loops: Flag<["-"],  "ffinite-loops">, Group<f_Group>,
  def fno_finite_loops: Flag<["-"], "fno-finite-loops">, Group<f_Group>,
    HelpText<"Do not assume that any loop is finite.">, Flags<[CC1Option]>;
  
@@ -44,23 +30,11 @@ index 3cab37b21..1a1162ce1 100644
  def ftrigraphs : Flag<["-"], "ftrigraphs">, Group<f_Group>,
    HelpText<"Process trigraph sequences">, Flags<[CC1Option]>;
  def fno_trigraphs : Flag<["-"], "fno-trigraphs">, Group<f_Group>,
-diff --git a/clang/lib/Basic/Version.cpp b/clang/lib/Basic/Version.cpp
-index e205da7ad..94b06742e 100644
---- a/clang/lib/Basic/Version.cpp
-+++ b/clang/lib/Basic/Version.cpp
-@@ -58,6 +58,7 @@ std::string getLLVMRevision() {
- }
- 
- std::string getClangFullRepositoryVersion() {
-+  return std::string("(totally not 15.0.6 with additional foo)");
-   std::string buf;
-   llvm::raw_string_ostream OS(buf);
-   std::string Path = getClangRepositoryPath();
 diff --git a/clang/lib/CodeGen/BackendUtil.cpp b/clang/lib/CodeGen/BackendUtil.cpp
-index 7c4e35634..ff2011369 100644
+index 10d6bff25..a14a0d571 100644
 --- a/clang/lib/CodeGen/BackendUtil.cpp
 +++ b/clang/lib/CodeGen/BackendUtil.cpp
-@@ -771,6 +771,7 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
+@@ -831,6 +831,7 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
    // Only enable CGProfilePass when using integrated assembler, since
    // non-integrated assemblers don't recognize .cgprofile section.
    PTO.CallGraphProfile = !CodeGenOpts.DisableIntegratedAS;
@@ -69,10 +43,10 @@ index 7c4e35634..ff2011369 100644
    LoopAnalysisManager LAM;
    FunctionAnalysisManager FAM;
 diff --git a/clang/lib/Driver/ToolChains/Clang.cpp b/clang/lib/Driver/ToolChains/Clang.cpp
-index 3704ed858..1cfe2a678 100644
+index 77554aa2c..226db86f1 100644
 --- a/clang/lib/Driver/ToolChains/Clang.cpp
 +++ b/clang/lib/Driver/ToolChains/Clang.cpp
-@@ -6262,6 +6262,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
+@@ -6335,6 +6335,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
    Args.AddLastArg(CmdArgs, options::OPT_funroll_loops,
                    options::OPT_fno_unroll_loops);
  
@@ -82,10 +56,10 @@ index 3704ed858..1cfe2a678 100644
  
    Args.AddLastArg(CmdArgs, options::OPT_pthread);
 diff --git a/clang/lib/Frontend/CompilerInvocation.cpp b/clang/lib/Frontend/CompilerInvocation.cpp
-index 2dd96e68b..78ad3188d 100644
+index 0bb9c8c83..bb007cd30 100644
 --- a/clang/lib/Frontend/CompilerInvocation.cpp
 +++ b/clang/lib/Frontend/CompilerInvocation.cpp
-@@ -1408,6 +1408,9 @@ void CompilerInvocation::GenerateCodeGenArgs(
+@@ -1420,6 +1420,9 @@ void CompilerInvocation::GenerateCodeGenArgs(
    else if (!Opts.UnrollLoops && Opts.OptimizationLevel > 1)
      GenerateArg(Args, OPT_fno_unroll_loops, SA);
  
@@ -95,7 +69,7 @@ index 2dd96e68b..78ad3188d 100644
    if (!Opts.BinutilsVersion.empty())
      GenerateArg(Args, OPT_fbinutils_version_EQ, Opts.BinutilsVersion, SA);
  
-@@ -1700,6 +1703,9 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
+@@ -1704,6 +1707,9 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
    Opts.UnrollLoops =
        Args.hasFlag(OPT_funroll_loops, OPT_fno_unroll_loops,
                     (Opts.OptimizationLevel > 1));
@@ -106,10 +80,10 @@ index 2dd96e68b..78ad3188d 100644
        std::string(Args.getLastArgValue(OPT_fbinutils_version_EQ));
  
 diff --git a/llvm/include/llvm/CodeGen/CodeGenPassBuilder.h b/llvm/include/llvm/CodeGen/CodeGenPassBuilder.h
-index f4b1980b9..2ddff5f1d 100644
+index 9ac51ed9f..a52efa1b0 100644
 --- a/llvm/include/llvm/CodeGen/CodeGenPassBuilder.h
 +++ b/llvm/include/llvm/CodeGen/CodeGenPassBuilder.h
-@@ -41,6 +41,7 @@
+@@ -39,6 +39,7 @@
  #include "llvm/Target/CGPassBuilderOption.h"
  #include "llvm/Target/TargetMachine.h"
  #include "llvm/Transforms/Scalar/ConstantHoisting.h"
@@ -118,11 +92,11 @@ index f4b1980b9..2ddff5f1d 100644
  #include "llvm/Transforms/Scalar/LoopStrengthReduce.h"
  #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 diff --git a/llvm/include/llvm/InitializePasses.h b/llvm/include/llvm/InitializePasses.h
-index 8cf31c08d..8846a732f 100644
+index 1164cd872..472064755 100644
 --- a/llvm/include/llvm/InitializePasses.h
 +++ b/llvm/include/llvm/InitializePasses.h
-@@ -441,6 +441,8 @@ void initializeWriteBitcodePassPass(PassRegistry&);
- void initializeWriteThinLTOBitcodePass(PassRegistry&);
+@@ -419,6 +419,8 @@ void initializeWinEHPreparePass(PassRegistry&);
+ void initializeWriteBitcodePassPass(PassRegistry&);
  void initializeXRayInstrumentationPass(PassRegistry&);
  
 +void initializeLinearizePass(PassRegistry&);
@@ -131,11 +105,11 @@ index 8cf31c08d..8846a732f 100644
  
  #endif // LLVM_INITIALIZEPASSES_H
 diff --git a/llvm/include/llvm/LinkAllPasses.h b/llvm/include/llvm/LinkAllPasses.h
-index e660ea05d..b1ee636cb 100644
+index c76d7adcb..856877305 100644
 --- a/llvm/include/llvm/LinkAllPasses.h
 +++ b/llvm/include/llvm/LinkAllPasses.h
-@@ -228,6 +228,8 @@ namespace {
-       (void)llvm::createFunctionSpecializationPass();
+@@ -215,6 +215,8 @@ namespace {
+       (void) llvm::createFixIrreduciblePass();
        (void)llvm::createSelectOptimizePass();
  
 +      (void) llvm::createLinearizePass();
@@ -144,10 +118,10 @@ index e660ea05d..b1ee636cb 100644
        (void)new llvm::ScalarEvolutionWrapperPass();
        llvm::Function::Create(nullptr, llvm::GlobalValue::ExternalLinkage)->viewCFGOnly();
 diff --git a/llvm/include/llvm/Passes/PassBuilder.h b/llvm/include/llvm/Passes/PassBuilder.h
-index 0cbbdf7f3..6819f04b1 100644
+index b7e6764d4..3782c7bf5 100644
 --- a/llvm/include/llvm/Passes/PassBuilder.h
 +++ b/llvm/include/llvm/Passes/PassBuilder.h
-@@ -83,6 +83,9 @@ public:
+@@ -85,6 +85,9 @@ public:
    // analyses after various module->function or cgscc->function adaptors in the
    // default pipelines.
    bool EagerlyInvalidateAnalyses;
@@ -158,10 +132,10 @@ index 0cbbdf7f3..6819f04b1 100644
  
  /// This class provides access to building LLVM's passes.
 diff --git a/llvm/include/llvm/Transforms/Scalar.h b/llvm/include/llvm/Transforms/Scalar.h
-index 5f852963c..1c5c547ae 100644
+index 3db3e41d2..746ec0229 100644
 --- a/llvm/include/llvm/Transforms/Scalar.h
 +++ b/llvm/include/llvm/Transforms/Scalar.h
-@@ -556,6 +556,8 @@ FunctionPass *createInstSimplifyLegacyPass();
+@@ -543,6 +543,8 @@ FunctionPass *createInstSimplifyLegacyPass();
  // and scatter intrinsics with scalar code when target doesn't support them.
  //
  FunctionPass *createScalarizeMaskedMemIntrinLegacyPass();
@@ -221,10 +195,10 @@ index 000000000..9b83648ba
 +
 +#endif // LLVM_TRANSFORMS_SCALAR_LINEARIZE_H
 diff --git a/llvm/lib/Passes/PassBuilder.cpp b/llvm/lib/Passes/PassBuilder.cpp
-index 42fde3752..2395e79b0 100644
+index e251d5646..c61bb9ed3 100644
 --- a/llvm/lib/Passes/PassBuilder.cpp
 +++ b/llvm/lib/Passes/PassBuilder.cpp
-@@ -165,6 +165,7 @@
+@@ -171,6 +171,7 @@
  #include "llvm/Transforms/Scalar/InstSimplifyPass.h"
  #include "llvm/Transforms/Scalar/JumpThreading.h"
  #include "llvm/Transforms/Scalar/LICM.h"
@@ -233,7 +207,7 @@ index 42fde3752..2395e79b0 100644
  #include "llvm/Transforms/Scalar/LoopBoundSplit.h"
  #include "llvm/Transforms/Scalar/LoopDataPrefetch.h"
 diff --git a/llvm/lib/Passes/PassBuilderPipelines.cpp b/llvm/lib/Passes/PassBuilderPipelines.cpp
-index 945ef5123..ff180cb39 100644
+index 0d074951c..d4fd7595a 100644
 --- a/llvm/lib/Passes/PassBuilderPipelines.cpp
 +++ b/llvm/lib/Passes/PassBuilderPipelines.cpp
 @@ -88,6 +88,7 @@
@@ -244,15 +218,15 @@ index 945ef5123..ff180cb39 100644
  #include "llvm/Transforms/Scalar/LoopDeletion.h"
  #include "llvm/Transforms/Scalar/LoopDistribute.h"
  #include "llvm/Transforms/Scalar/LoopFlatten.h"
-@@ -193,6 +194,7 @@ PipelineTuningOptions::PipelineTuningOptions() {
-   CallGraphProfile = true;
+@@ -291,6 +292,7 @@ PipelineTuningOptions::PipelineTuningOptions() {
    MergeFunctions = EnableMergeFunctions;
+   InlinerThreshold = -1;
    EagerlyInvalidateAnalyses = EnableEagerlyInvalidateAnalyses;
 +  LinearizeCFG = false;
  }
  
  namespace llvm {
-@@ -1261,9 +1263,14 @@ PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
+@@ -1354,9 +1356,14 @@ PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM),
                                                  PTO.EagerlyInvalidateAnalyses));
  
@@ -267,7 +241,7 @@ index 945ef5123..ff180cb39 100644
    // Split out cold code. Splitting is done late to avoid hiding context from
    // other optimizations and inadvertently regressing performance. The tradeoff
    // is that this has a higher code size cost than splitting early.
-@@ -1862,6 +1869,10 @@ ModulePassManager PassBuilder::buildO0DefaultPipeline(OptimizationLevel Level,
+@@ -1959,6 +1966,10 @@ ModulePassManager PassBuilder::buildO0DefaultPipeline(OptimizationLevel Level,
    for (auto &C : OptimizerLastEPCallbacks)
      C(MPM, Level);
  
@@ -279,10 +253,10 @@ index 945ef5123..ff180cb39 100644
      addRequiredLTOPreLinkPasses(MPM);
  
 diff --git a/llvm/lib/Passes/PassRegistry.def b/llvm/lib/Passes/PassRegistry.def
-index 7c29bffbc..35399fd38 100644
+index 10af4160c..e62bcd192 100644
 --- a/llvm/lib/Passes/PassRegistry.def
 +++ b/llvm/lib/Passes/PassRegistry.def
-@@ -126,6 +126,7 @@ MODULE_PASS("sancov-module", ModuleSanitizerCoveragePass())
+@@ -127,6 +127,7 @@ MODULE_PASS("sanmd-module", SanitizerBinaryMetadataPass())
  MODULE_PASS("memprof-module", ModuleMemProfilerPass())
  MODULE_PASS("poison-checking", PoisonCheckingPass())
  MODULE_PASS("pseudo-probe-update", PseudoProbeUpdatePass())
@@ -305,7 +279,7 @@ index eb008c159..750dd6d9a 100644
    ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms/Scalar
 diff --git a/llvm/lib/Transforms/Scalar/Linearize.cpp b/llvm/lib/Transforms/Scalar/Linearize.cpp
 new file mode 100644
-index 000000000..7a47cd985
+index 000000000..d3712f31c
 --- /dev/null
 +++ b/llvm/lib/Transforms/Scalar/Linearize.cpp
 @@ -0,0 +1,842 @@
@@ -401,7 +375,7 @@ index 000000000..7a47cd985
 +			dbgs() << "Intrinsic " << Intrinsic::getBaseName(id) << " has Attribtues:\n";
 +		al.print(dbgs());
 +
-+		if (al.hasFnAttr(Attribute::ReadNone) && al.hasFnAttr(Attribute::WillReturn)) {
++		if (ci->doesNotAccessMemory() && al.hasFnAttr(Attribute::WillReturn)) {
 +			dbgs() << "Ignoring due to readnone\n";
 +			continue;
 +		}
@@ -1007,7 +981,7 @@ index 000000000..7a47cd985
 +
 +			// merge bb
 +			last->getTerminator()->eraseFromParent();
-+			last->getInstList().splice(last->end(), it->getInstList(), it->begin(), it->end());
++			last->splice(last->end(), &*it);
 +			todel.push_back(&*it);
 +		}
 +
@@ -1041,7 +1015,7 @@ index 000000000..7a47cd985
 +		/*
 +		// just paste the basicblocks one after the other without interleaving 
 +		for (BasicBlock *bb : bblist) {
-+			tar->getInstList().splice(tar->end(), bb->getInstList(), bb->begin(), bb->end());
++			tar->splice(tar->end(), &*bb);
 +			bb->eraseFromParent();
 +		}
 +		*/
@@ -1074,7 +1048,7 @@ index 000000000..7a47cd985
 +				ei = std::next(ei);
 +			}
 +			//std::advance(ei, num);
-+			tar->getInstList().splice(tar->end(), (*it)->getInstList(), (*it)->begin(), ei);
++			tar->splice(tar->end(), *it, (*it)->begin(), ei);
 +			num_inst -= num;
 +			if (num == left) {
 +//				dbgs() << "block " << (*it)->size() << " is depelted - erasing\n";
@@ -1153,10 +1127,10 @@ index 000000000..7a47cd985
 +*/
 \ No newline at end of file
 diff --git a/llvm/lib/Transforms/Scalar/Scalar.cpp b/llvm/lib/Transforms/Scalar/Scalar.cpp
-index 5ab9e2557..6fd3e4da6 100644
+index 8aee8d140..e3910f70a 100644
 --- a/llvm/lib/Transforms/Scalar/Scalar.cpp
 +++ b/llvm/lib/Transforms/Scalar/Scalar.cpp
-@@ -111,6 +111,8 @@ void llvm::initializeScalarOpts(PassRegistry &Registry) {
+@@ -109,6 +109,8 @@ void llvm::initializeScalarOpts(PassRegistry &Registry) {
    initializeLoopLoadEliminationPass(Registry);
    initializeLoopSimplifyCFGLegacyPassPass(Registry);
    initializeLoopVersioningLegacyPassPass(Registry);
