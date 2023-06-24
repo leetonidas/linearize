@@ -14,11 +14,11 @@ On Windows only building the pass into llvm has a chance to succeed as to my kno
 
 ### build into llvm
 
-First checkout version 15.0.6 of [llvm-project](https://github.com/llvm/llvm-project).
+First checkout version 16.0.6 of [llvm-project](https://github.com/llvm/llvm-project).
 Then apply linearize\_in\_tree.patch in llvm-project, run cmake, and lastly build using ninja.
 
 ```Bash
-git clone --depth 1 --branch llvmorg-15.0.6 https://github.com/llvm/llvm-project
+git clone --depth 1 --branch llvmorg-16.0.6 https://github.com/llvm/llvm-project
 cd llvm-project
 patch -p1 < ../linearize_in_tree.patch
 cd -
@@ -31,8 +31,8 @@ ninja install
 
 ### build as pass plugin
 
-Make sure you have llvm version 15.0.6 installed (minor version missmatches often times don't matter).
-If multiple llvm version are installed find the path to the cmake directory of llvm 15.0.6.
+Make sure you have llvm version 16.0.6 installed (minor version missmatches often times don't matter).
+If multiple llvm version are installed find the path to the cmake directory of llvm 16.0.6.
 Replace the path of the LLVM\_DIR option with the pass to your installation
 
 ```Bash
