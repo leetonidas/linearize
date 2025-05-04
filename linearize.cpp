@@ -1,3 +1,4 @@
+#include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -64,7 +65,7 @@ bool translateMemset(CallInst *ci) {
 	IntegerType *sizet = IntegerType::getIntNTy(ctx, dl.getMaxIndexSizeInBits());
 	IRBuilder<> Builder(ci);
 
-	FunctionType *ft = FunctionType::get(Type::getVoidTy(ctx), {Type::getInt8PtrTy(ctx), Type::getInt32Ty(ctx), sizet}, false);
+	FunctionType *ft = FunctionType::get(Type::getVoidTy(ctx), {Type::getInt8Ty(ctx)->getPointerTo(), Type::getInt32Ty(ctx), sizet}, false);
 	FunctionCallee fc = M->getOrInsertFunction("memset", ft);
 
 	Builder.CreateCall(fc,
@@ -83,7 +84,7 @@ bool translateMemcpy(CallInst *ci) {
 	IntegerType *sizet = IntegerType::getIntNTy(ctx, dl.getMaxIndexSizeInBits());
 	IRBuilder<> Builder(ci);
 
-	FunctionType *ft = FunctionType::get(Type::getVoidTy(ctx), {Type::getInt8PtrTy(ctx), Type::getInt8PtrTy(ctx) , sizet}, false);
+	FunctionType *ft = FunctionType::get(Type::getVoidTy(ctx), {Type::getInt8Ty(ctx)->getPointerTo(), Type::getInt8Ty(ctx)->getPointerTo(), sizet}, false);
 	FunctionCallee fc = M->getOrInsertFunction("memcpy", ft);
 
 	Builder.CreateCall(fc,
